@@ -1,0 +1,76 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+from xgboost import XGBRegressor
+import plotly.graph_objects as go
+from datetime import datetime
+
+# إعدادات الصفحة
+st.set_page_config(page_title="AI Gold Predictor", layout="wide")
+
+st.title("🥇 منصة ذكاء الذهب الاحترافية")
+st.markdown("توقع اتجاهات الذهب بناءً على مؤشرات **الدولار (USD)** و **النفط (Crude Oil)**")
+
+# --- 1. جلب البيانات ---
+@st.cache_data(ttl=3600) # تحديث البيانات كل ساعة
+def load_data():
+    # الذهب (GC=F)، الدولار (DX-Y.NYB)، النفط (CL=F)
+    gold = yf.download("GC=F", period="5y")['Close']
+    usd = yf.download("DX-Y.NYB", period="5y")['Close']
+    oil = yf.download("CL=F", period="5y")['Close']
+    
+    df = pd.concat([gold, usd, oil], axis=1)
+    df.columns = ['Gold', 'USD', 'Oil']
+    df = df.fillna(method='ffill').dropna()
+    return df
+
+df = load_data()
+
+# --- 2. محرك الذكاء الاصطناعي ---
+def train_model(data):
+    df_train = data.copy()
+    df_train['Target'] = df_train['Gold'].shift(-1)
+    df_train = df_train.dropna()
+    
+    X = df_train[['Gold', 'USD', 'Oil']]
+    y = df_train['Target']
+    
+    model = XGBRegressor(n_estimators=100, learning_rate=0.05, max_depth=5)
+    model.fit(X, y)
+    return model
+
+model = train_model(df)
+
+# --- 3. التوقع الحالي ---
+current_price = df['Gold'].iloc[-1]
+last_usd = df['USD'].iloc[-1]
+last_oil = df['Oil'].iloc[-1]
+
+input_data = pd.DataFrame([[current_price, last_usd, last_oil]], columns=['Gold', 'USD', 'Oil'])
+prediction = model.predict(input_data)[0]
+change_pct = ((prediction - current_price) / current_price) * 100
+
+# --- 4. واجهة المستخدم (Dashboard) ---
+col1, col2, col3 = st.columns(3)
+col1.metric("سعر الذهب الحالي", f"${current_price:,.2f}")
+col2.metric("مؤشر الدولار", f"{last_usd:,.2f}")
+col3.metric("سعر النفط", f"${last_oil:,.2f}")
+
+st.divider()
+
+# منطقة التوصية
+st.subheader("🤖 تحليل الذكاء الاصطناعي")
+if change_pct > 0.5:
+    st.success(f"📈 إشارة شراء: يتوقع النظام صعوداً إلى ${prediction:,.2f} (تغير: +{change_pct:.2f}%)")
+elif change_pct < -0.5:
+    st.error(f"📉 إشارة بيع: يتوقع النظام هبوطاً إلى ${prediction:,.2f} (تغير: {change_pct:.2f}%)")
+else:
+    st.warning("⚖️ إشارة انتظار: السوق مستقر حالياً، لا توجد حركة قوية متوقعة.")
+
+# الرسم البياني
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=df.index[-100:], y=df['Gold'][-100:], name="سعر الذهب التاريخي"))
+fig.layout.update(title_text="حركة الذهب في آخر 100 يوم", xaxis_rangeslider_visible=True)
+st.plotly_chart(fig, use_container_width=True)
+
+st.info("ملاحظة: هذا النظام يعتمد على خوارزميات إحصائية، يرجى استخدامه كأداة مساعدة فقط وليس كبديل للنصيحة المالية.")
